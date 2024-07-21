@@ -1,0 +1,1582 @@
+--- sp/src/game/client/c_baseanimating.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/c_baseanimating.cpp	Sat Jul 20 23:11:28 2024
+@@ -60,6 +60,8 @@
+ #include "c_baseobject.h"
+ #endif
+ 
++#include "deferred/deferred_shared_common.h"
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -3309,12 +3311,15 @@
+ 		//FIXME: We should really use a named attachment for this
+ 		if ( m_Attachments.Count() > 0 )
+ 		{
+-			Vector vAttachment;
+-			QAngle dummyAngles;
+-			GetAttachment( 1, vAttachment, dummyAngles );
++			Vector vAttachment, vAng;
++			QAngle angles;
++			GetAttachment( 1, vAttachment, angles );
++
++			AngleVectors(angles, &vAng);
++			vAttachment += vAng * 2;
+ 
+ 			// Make an elight
+-			dlight_t *el = effects->CL_AllocElight( LIGHT_INDEX_MUZZLEFLASH + m_nIndex );
++			/*dlight_t *el = effects->CL_AllocElight( LIGHT_INDEX_MUZZLEFLASH + m_nIndex );
+ 			el->origin = vAttachment;
+ 			el->radius = random->RandomInt( 32, 64 ); 
+ 			el->decay = el->radius / 0.05f;
+@@ -3322,7 +3327,30 @@
+ 			el->color.r = 255;
+ 			el->color.g = 192;
+ 			el->color.b = 64;
+-			el->color.exponent = 5;
++			el->color.exponent = 5;*/
++			//el->decay = 512.0f;
++
++			def_light_temp_t *l = new def_light_temp_t( 0.05f );
++
++			l->ang = vec3_angle;
++			l->pos = vAttachment;
++
++			l->col_diffuse = Vector( 0.964705882f, 0.82745098f, 0.403921569f );
++			//l->col_ambient = Vector(20, 20, 20); //GetColor_Ambient();
++
++			l->flRadius = random->RandomFloat( 64, 128 );
++			l->flFalloffPower = 1.0f;
++
++			l->iVisible_Dist = l->flRadius * 2;
++			l->iVisible_Range = l->flRadius * 2;
++			l->iShadow_Dist = l->flRadius;
++			l->iShadow_Range = l->flRadius;
++
++			l->iFlags >>= DEFLIGHTGLOBAL_FLAGS_MAX_SHARED_BITS;
++			l->iFlags <<= DEFLIGHTGLOBAL_FLAGS_MAX_SHARED_BITS;
++			l->iFlags |= DEFLIGHT_SHADOW_ENABLED;
++
++			GetLightingManager()->AddTempLight( l );
+ 		}
+ 	}
+ }
+--- sp/src/game/client/c_baseentity.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/c_baseentity.cpp	Sun Jul 21 18:44:51 2024
+@@ -41,6 +41,8 @@
+ #include "inetchannelinfo.h"
+ #include "proto_version.h"
+ 
++#include "deferred/deferred_shared_common.h"
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -1926,6 +1928,61 @@
+ 		return NULL;
+ }
+ 
++void C_BaseEntity::InstallBrushSurfaceRenderer( IBrushRenderer* renderer )
++{
++	m_bHasSpecialRenderer = renderer != NULL;
++	render->InstallBrushSurfaceRenderer( renderer );
++}
++
++static class CDefaultBrushRenderer : public IBrushRenderer
++{
++public:
++	bool RenderBrushModelSurface( IClientEntity* pBaseEntity, IBrushSurface* pBrushSurface ) OVERRIDE
++	{
++		const uint32 numVertices = pBrushSurface->GetVertexCount();
++		if ( vertexBufferSize < numVertices )
++		{
++			MEM_ALLOC_CREDIT_CLASS();
++			if ( vertices )
++				MemAlloc_FreeAligned( vertices );
++			vertexBufferSize = numVertices;
++			vertices = static_cast<BrushVertex_t*>( MemAlloc_AllocAligned( numVertices * sizeof( BrushVertex_t ), sizeof( BrushVertex_t ) ) );
++		}
++		pBrushSurface->GetVertexData( vertices );
++		CMatRenderContextPtr pRenderContext( materials );
++		CMeshBuilder builder;
++		builder.Begin( pRenderContext->GetDynamicMesh( true, 0, 0, pBrushSurface->GetMaterial() ), MATERIAL_POLYGON, numVertices );
++		for ( uint32 i = 0; i < numVertices; ++i )
++		{
++			BrushVertex_t& vertex = vertices[i];
++			builder.Position3fv( vertex.m_Pos.Base() );
++			builder.Normal3fv( vertex.m_Normal.Base() );
++			if ( vertex.m_TangentS.IsValid() )
++				builder.TangentS3fv( vertex.m_TangentS.Base() );
++			if ( vertex.m_TangentT.IsValid() )
++				builder.TangentT3fv( vertex.m_TangentT.Base() );
++			builder.TexCoord2fv( 0, vertex.m_TexCoord.Base() );
++			builder.TexCoord2fv( 1, vertex.m_LightmapCoord.Base() );
++			builder.AdvanceVertex();
++		}
++
++		builder.End( false, true );
++
++		return true;
++	}
++
++	CDefaultBrushRenderer() : vertices( NULL ), vertexBufferSize( 0 ) {}
++
++	~CDefaultBrushRenderer()
++	{
++		if ( vertices )
++			MemAlloc_FreeAligned( vertices );
++	}
++
++private:
++	BrushVertex_t* vertices;
++	uint32 vertexBufferSize;
++} defaultRenderer;
+ 
+ //-----------------------------------------------------------------------------
+ // Purpose: 
+@@ -1946,6 +2003,9 @@
+ 		DepthMode = DEPTH_MODE_SHADOW;
+ 	}
+ 
++	if ( !m_bHasSpecialRenderer )
++		render->InstallBrushSurfaceRenderer( &defaultRenderer );
++
+ 	if ( DepthMode != DEPTH_MODE_NORMAL )
+ 	{
+ 		render->DrawBrushModelShadowDepth( this, (model_t *)m_pModel, GetAbsOrigin(), GetAbsAngles(), DepthMode );
+@@ -1960,6 +2020,9 @@
+ 		render->DrawBrushModelEx( this, (model_t *)m_pModel, GetAbsOrigin(), GetAbsAngles(), mode );
+ 	}
+ 
++	if ( !m_bHasSpecialRenderer )
++		render->InstallBrushSurfaceRenderer( NULL );
++
+ 	return 1;
+ }
+ 
+@@ -3515,7 +3578,8 @@
+ //-----------------------------------------------------------------------------
+ int C_BaseEntity::GetFxBlend( void )
+ {
+-	Assert( m_nFXComputeFrame == gpGlobals->framecount );
++	// spam
++	// Assert( m_nFXComputeFrame == gpGlobals->framecount );
+ 	return m_nRenderFXBlend;
+ }
+ 
+@@ -4818,25 +4882,46 @@
+ 
+ CON_COMMAND_F( dlight_debug, "Creates a dlight in front of the player", FCVAR_CHEAT )
+ {
+-	dlight_t *el = effects->CL_AllocDlight( 1 );
++	//dlight_t *el = effects->CL_AllocDlight( 1 );
+ 	C_BasePlayer *player = C_BasePlayer::GetLocalPlayer();
+ 	if ( !player )
+ 		return;
+ 	Vector start = player->EyePosition();
+ 	Vector forward;
+ 	player->EyeVectors( &forward );
+-	Vector end = start + forward * MAX_TRACE_LENGTH;
++	const Vector& end = start + forward * MAX_TRACE_LENGTH;
+ 	trace_t tr;
+ 	UTIL_TraceLine( start, end, MASK_SHOT_HULL & (~CONTENTS_GRATE), player, COLLISION_GROUP_NONE, &tr );
+-	el->origin = tr.endpos - forward * 12.0f;
++	/*el->origin = tr.endpos - forward * 12.0f;
+ 	el->radius = 200; 
+ 	el->decay = el->radius / 5.0f;
+ 	el->die = gpGlobals->curtime + 5.0f;
+ 	el->color.r = 255;
+ 	el->color.g = 192;
+ 	el->color.b = 64;
+-	el->color.exponent = 5;
++	el->color.exponent = 5;*/
++
++	def_light_temp_t *l = new def_light_temp_t( 0.1f );
++
++	l->ang = vec3_angle;
++	l->pos = tr.endpos - forward * 12.0f;
++
++	l->col_diffuse = Vector( 0.964705882f, 0.82745098f, 0.403921569f );
++	//l->col_ambient = Vector(20, 20, 20); //GetColor_Ambient();
++
++	l->flRadius = 256.f;
++	l->flFalloffPower = 3.0f;
++
++	l->iVisible_Dist = l->flRadius * 2;
++	l->iVisible_Range = l->flRadius * 2;
++	l->iShadow_Dist = l->flRadius;
++	l->iShadow_Range = l->flRadius;
++
++	l->iFlags >>= DEFLIGHTGLOBAL_FLAGS_MAX_SHARED_BITS;
++	l->iFlags <<= DEFLIGHTGLOBAL_FLAGS_MAX_SHARED_BITS;
++	l->iFlags |= DEFLIGHT_SHADOW_ENABLED;
+ 
++	GetLightingManager()->AddTempLight( l );
+ }
+ //-----------------------------------------------------------------------------
+ // Purpose: 
+--- sp/src/game/client/c_baseentity.h	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/c_baseentity.h	Sat Jul 20 23:13:27 2024
+@@ -58,6 +58,7 @@
+ class CEntityMapData;
+ class ConVar;
+ class CDmgAccumulator;
++class IBrushRenderer;
+ 
+ struct CSoundParameters;
+ 
+@@ -1673,6 +1674,10 @@
+ 
+ 	CThreadFastMutex m_CalcAbsolutePositionMutex;
+ 	CThreadFastMutex m_CalcAbsoluteVelocityMutex;
++
++	void InstallBrushSurfaceRenderer( IBrushRenderer* );
++private:
++	bool m_bHasSpecialRenderer;
+ 
+ #ifdef TF_CLIENT_DLL
+ 	// TF prevents drawing of any entity attached to players that aren't items in the inventory of the player.
+--- sp/src/game/client/c_baseplayer.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/c_baseplayer.cpp	Sun Jul 21 00:02:43 2024
+@@ -54,6 +54,8 @@
+ #include "econ_wearable.h"
+ #endif
+ 
++#include "deferred/flashlighteffect_deferred.h"
++
+ // NVNT haptics system interface
+ #include "haptics/ihaptics.h"
+ 
+@@ -1209,7 +1211,8 @@
+ 		if (!m_pFlashlight)
+ 		{
+ 			// Turned on the headlight; create it.
+-			m_pFlashlight = new CFlashlightEffect(m_nIndex);
++			//m_pFlashlight = new CFlashlightEffect(index);
++			m_pFlashlight = new CFlashlightEffectDeferred(entindex());
+ 
+ 			if (!m_pFlashlight)
+ 				return;
+@@ -1240,11 +1243,11 @@
+ 	UpdateFlashlight();
+ 
+ 	// Check for muzzle flash and apply to view model
+-	C_BaseAnimating *ve = this;
++	/*C_BaseAnimating *ve = this;
+ 	if ( GetObserverMode() == OBS_MODE_IN_EYE )
+ 	{
+ 		ve = dynamic_cast< C_BaseAnimating* >( GetObserverTarget() );
+-	}
++	}*/
+ }
+ 
+ 
+--- sp/src/game/client/c_baseplayer.h	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/c_baseplayer.h	Sat Jul 20 23:14:52 2024
+@@ -37,6 +37,7 @@
+ class C_FuncLadder;
+ class CFlashlightEffect;
+ class C_EconWearable;
++class CViewSetup;
+ 
+ extern int g_nKillCamMode;
+ extern int g_nKillCamTarget1;
+--- sp/src/game/client/c_func_breakablesurf.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/c_func_breakablesurf.cpp	Sat Jul 20 23:15:11 2024
+@@ -516,13 +516,13 @@
+ 
+ 	// If I'm not broken draw normally
+ 	if (m_bIsBroken)
+-		render->InstallBrushSurfaceRenderer( this );
++		InstallBrushSurfaceRenderer( this );
+ 
+ 	// If it's broken, always draw it translucent
+ 	BaseClass::DrawModel( m_bIsBroken ? flags | STUDIO_TRANSPARENCY : flags );
+ 
+ 	// Remove our nonstandard brush surface renderer...
+-	render->InstallBrushSurfaceRenderer( 0 );
++	InstallBrushSurfaceRenderer( NULL );
+ 
+ 	return 0;
+ }
+--- sp/src/game/client/cdll_client_int.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/cdll_client_int.cpp	Sun Jul 21 18:45:22 2024
+@@ -169,6 +169,8 @@
+ #include "sixense/in_sixense.h"
+ #endif
+ 
++#include "deferred/deferred_shared_common.h"
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -635,7 +637,7 @@
+ 
+ 
+ 	virtual void					View_Render( vrect_t *rect );
+-	virtual void					RenderView( const CViewSetup &view, int nClearFlags, int whatToDraw );
++	virtual void					RenderView( const CViewSetupEngine &view, int nClearFlags, int whatToDraw );
+ 	virtual void					View_Fade( ScreenFade_t *pSF );
+ 	
+ 	virtual void					SetCrosshairAngle( const QAngle& angle );
+@@ -689,7 +691,7 @@
+ 	virtual void			WriteSaveGameScreenshotOfSize( const char *pFilename, int width, int height, bool bCreatePowerOf2Padded/*=false*/, bool bWriteVTF/*=false*/ );
+ 
+ 	// Gets the location of the player viewpoint
+-	virtual bool			GetPlayerView( CViewSetup &playerView );
++	virtual bool			GetPlayerView( CViewSetupEngine &playerView );
+ 
+ 	// Matchmaking
+ 	virtual void			SetupGameProperties( CUtlVector< XUSER_CONTEXT > &contexts, CUtlVector< XUSER_PROPERTY > &properties );
+@@ -1502,7 +1504,7 @@
+ //-----------------------------------------------------------------------------
+ // Gets the location of the player viewpoint
+ //-----------------------------------------------------------------------------
+-bool CHLClient::GetPlayerView( CViewSetup &playerView )
++bool CHLClient::GetPlayerView( CViewSetupEngine &playerView )
+ {
+ 	playerView = *g_pView->GetPlayerViewSetup();
+ 	return true;
+@@ -1660,6 +1662,8 @@
+ 	g_pStringTableClientSideChoreoScenes = NULL;
+ 	g_pStringTableServerMapCycle = NULL;
+ 
++	g_pStringTable_LightCookies = NULL;
++
+ #ifdef TF_CLIENT_DLL
+ 	g_pStringTableServerPopFiles = NULL;
+ 	g_pStringTableServerMapCycleMvM = NULL;
+@@ -1890,6 +1894,12 @@
+ 	{
+ 		g_pStringTableServerMapCycle = networkstringtable->FindTable( tableName );
+ 	}
++	else if ( !Q_strcasecmp( tableName, COOKIE_STRINGTBL_NAME ) )
++	{
++		g_pStringTable_LightCookies = networkstringtable->FindTable( tableName );
++
++		g_pStringTable_LightCookies->SetStringChangedCallback( NULL, OnCookieTableChanged );
++	}
+ #ifdef TF_CLIENT_DLL
+ 	else if ( !Q_strcasecmp( tableName, "ServerPopFiles" ) )
+ 	{
+@@ -2484,9 +2494,10 @@
+ }
+ 
+ // See RenderViewInfo_t
+-void CHLClient::RenderView( const CViewSetup &setup, int nClearFlags, int whatToDraw )
++void CHLClient::RenderView( const CViewSetupEngine &engineSetup, int nClearFlags, int whatToDraw )
+ {
+ 	VPROF("RenderView");
++	CViewSetup setup( engineSetup );
+ 	g_pView->RenderView( setup, nClearFlags, whatToDraw );
+ }
+ 
+--- sp/src/game/client/flashlighteffect.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/flashlighteffect.cpp	Sat Jul 20 23:17:57 2024
+@@ -15,6 +15,8 @@
+ #include "tier1/KeyValues.h"
+ #include "toolframework_client.h"
+ 
++#include "deferred/cdeferred_manager_client.h"
++
+ #ifdef HL2_CLIENT_DLL
+ #include "c_basehlplayer.h"
+ #endif // HL2_CLIENT_DLL
+@@ -337,6 +339,11 @@
+ 	state.m_flShadowSlopeScaleDepthBias = mat_slopescaledepthbias_shadowmap.GetFloat();
+ 	state.m_flShadowDepthBias = mat_depthbias_shadowmap.GetFloat();
+ 
++	//UpdateLightProjection(state);
++
++if (GetDeferredManager()->IsDeferredRenderingEnabled()) {
++	UpdateLightProjection( state );
++} else {
+ 	if( m_FlashlightHandle == CLIENTSHADOW_INVALID_HANDLE )
+ 	{
+ 		m_FlashlightHandle = g_pClientShadowMgr->CreateFlashlight( state );
+@@ -353,6 +360,7 @@
+ 	
+ 	// Kill the old flashlight method if we have one.
+ 	LightOffOld();
++}
+ 
+ #ifndef NO_TOOLFRAMEWORK
+ 	if ( clienttools->IsInRecordingMode() )
+@@ -425,14 +433,17 @@
+ 	{
+ 		return;
+ 	}
+-	if( r_newflashlight.GetBool() )
+-	{
++
+ 		UpdateLightNew( vecPos, vecDir, vecRight, vecUp );
+-	}
+-	else
+-	{
+-		UpdateLightOld( vecPos, vecDir, nDistance );
+-	}
++
++	// if( r_newflashlight.GetBool())
++	// {
++	// 	UpdateLightNew( vecPos, vecDir, vecRight, vecUp );
++	// }
++	// else
++	// {
++	// 	UpdateLightOld( vecPos, vecDir, nDistance );
++	// }
+ }
+ 
+ 
+@@ -462,6 +473,24 @@
+ 	}
+ }
+ 
++void CFlashlightEffect::UpdateLightProjection( FlashlightState_t& state )
++{
++	if( m_FlashlightHandle == CLIENTSHADOW_INVALID_HANDLE )
++	{
++		m_FlashlightHandle = g_pClientShadowMgr->CreateFlashlight( state );
++	}
++	else
++	{
++		if( !r_flashlightlockposition.GetBool() )
++		{
++			g_pClientShadowMgr->UpdateFlashlightState( m_FlashlightHandle, state );
++		}
++	}
++
++	g_pClientShadowMgr->UpdateProjectedTexture( m_FlashlightHandle, true );
++}
++
++
+ //-----------------------------------------------------------------------------
+ // Purpose: 
+ //-----------------------------------------------------------------------------
+@@ -526,6 +555,11 @@
+ 	state.m_pSpotlightTexture = m_FlashlightTexture;
+ 	state.m_nSpotlightTextureFrame = 0;
+ 	
++//		UpdateLightProjection( state );
++
++	if (GetDeferredManager()->IsDeferredRenderingEnabled()) {
++		UpdateLightProjection( state );
++	} else {
+ 	if( GetFlashlightHandle() == CLIENTSHADOW_INVALID_HANDLE )
+ 	{
+ 		SetFlashlightHandle( g_pClientShadowMgr->CreateFlashlight( state ) );
+@@ -536,5 +570,6 @@
+ 	}
+ 	
+ 	g_pClientShadowMgr->UpdateProjectedTexture( GetFlashlightHandle(), true );
++	}
+ }
+ 
+--- sp/src/game/client/flashlighteffect.h	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/flashlighteffect.h	Sat Jul 20 23:18:18 2024
+@@ -10,7 +10,7 @@
+ #pragma once
+ #endif
+ 
+-struct dlight_t;
++//struct dlight_t;
+ 
+ 
+ class CFlashlightEffect
+@@ -30,7 +30,9 @@
+ 	
+ protected:
+ 
+-	void LightOff();
++	virtual void UpdateLightProjection( FlashlightState_t &state );
++
++	virtual void LightOff();
+ 	void LightOffOld();
+ 	void LightOffNew();
+ 
+@@ -49,7 +51,10 @@
+ 	CTextureReference m_FlashlightTexture;
+ };
+ 
+-class CHeadlightEffect : public CFlashlightEffect
++#include "deferred/flashlighteffect_deferred.h"
++
++//class CHeadlightEffect : public CFlashlightEffect
++class CHeadlightEffect : public CFlashlightEffectDeferred
+ {
+ public:
+ 	
+--- sp/src/game/client/fx_explosion.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/fx_explosion.cpp	Sat Jul 20 23:19:03 2024
+@@ -19,6 +19,8 @@
+ #include "fx_line.h"
+ #include "fx_water.h"
+ 
++#include "deferred/deferred_shared_common.h"
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -172,6 +174,7 @@
+ {
+ 	m_vecOrigin = position;
+ 	m_fFlags	= flags;
++	m_flScale	= scale;
+ 
+ 	//Find the force of the explosion
+ 	GetForceDirection( m_vecOrigin, force, &m_vecDirection, &m_flForce );
+@@ -190,7 +193,7 @@
+ 	}
+ 
+ 	CreateDebris();
+-	//FIXME: CreateDynamicLight();
++	CreateDynamicLight();
+ 	CreateMisc();
+ }
+ 
+@@ -697,7 +700,7 @@
+ //-----------------------------------------------------------------------------
+ void C_BaseExplosionEffect::CreateDynamicLight( void )
+ {
+-	if ( m_fFlags & TE_EXPLFLAG_NODLIGHTS )
++	/*if ( m_fFlags & TE_EXPLFLAG_NODLIGHTS )
+ 		return;
+ 
+ 	dlight_t *dl = effects->CL_AllocDlight( 0 );
+@@ -709,7 +712,31 @@
+ 	dl->color.r = 255;
+ 	dl->color.g = 220;
+ 	dl->color.b = 128;
+-	dl->die		= gpGlobals->curtime + 0.1f;
++	dl->die		= gpGlobals->curtime + 0.1f;*/
++
++	def_light_temp_t *l = new def_light_temp_t( 0.1f );
++
++	l->ang = vec3_angle;
++	l->pos = m_vecOrigin;
++	l->pos.z += 64.0f;
++
++	l->col_diffuse.Init( 0.964705882f, 0.82745098f, 0.403921569f );
++
++	l->flRadius = m_flScale * 512.f;
++	l->flFalloffPower = 1.0f;
++
++	l->iVisible_Dist = 1024.0f;
++	l->iVisible_Range = 1024.0f;
++	l->iShadow_Dist = 512.0f;
++	l->iShadow_Range = 512.0f;
++
++	l->iFlags >>= DEFLIGHTGLOBAL_FLAGS_MAX_SHARED_BITS;
++	l->iFlags <<= DEFLIGHTGLOBAL_FLAGS_MAX_SHARED_BITS;
++	l->iFlags |= DEFLIGHT_SHADOW_ENABLED;
++
++	DevMsg(1, "Temp deferred light for explosion at: %f %f %f\n", l->pos.x, l->pos.y, l->pos.z );
++
++	GetLightingManager()->AddTempLight( l );
+ }
+ 
+ //-----------------------------------------------------------------------------
+--- sp/src/game/client/fx_explosion.h	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/fx_explosion.h	Sat Jul 20 23:19:13 2024
+@@ -53,6 +53,7 @@
+ 	Vector	m_vecOrigin;
+ 	Vector	m_vecDirection;
+ 	float	m_flForce;
++	float	m_flScale;
+ 	int		m_fFlags;
+ 
+ 	PMaterialHandle	m_Material_Smoke;
+--- sp/src/game/client/iclientshadowmgr.h	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/iclientshadowmgr.h	Sat Jul 20 23:19:22 2024
+@@ -23,6 +23,7 @@
+ // Forward decls
+ //-----------------------------------------------------------------------------
+ struct FlashlightState_t;
++class CViewSetup;
+ 
+ 
+ //-----------------------------------------------------------------------------
+--- sp/src/game/client/particlemgr.h	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/particlemgr.h	Sat Jul 20 23:19:33 2024
+@@ -146,6 +146,7 @@
+ class CParticleMgr;
+ class CNewParticleEffect;
+ class CParticleCollection;
++class CViewSetup;
+ 
+ #define INVALID_MATERIAL_HANDLE	NULL
+ 
+--- sp/src/game/client/viewrender.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/viewrender.cpp	Sun Jul 21 18:46:45 2024
+@@ -89,7 +89,7 @@
+ 
+ //-----------------------------------------------------------------------------
+ 
+-static ConVar r_visocclusion( "r_visocclusion", "0", FCVAR_CHEAT );
++ConVar r_visocclusion( "r_visocclusion", "0", FCVAR_CHEAT );
+ extern ConVar r_flashlightdepthtexture;
+ extern ConVar vcollide_wireframe;
+ extern ConVar mat_motion_blur_enabled;
+@@ -108,15 +108,15 @@
+ // Matches the version in the engine
+ static ConVar r_drawopaqueworld( "r_drawopaqueworld", "1", FCVAR_CHEAT );
+ static ConVar r_drawtranslucentworld( "r_drawtranslucentworld", "1", FCVAR_CHEAT );
+-static ConVar r_3dsky( "r_3dsky","1", 0, "Enable the rendering of 3d sky boxes" );
+-static ConVar r_skybox( "r_skybox","1", FCVAR_CHEAT, "Enable the rendering of sky boxes" );
++ConVar r_3dsky( "r_3dsky","1", 0, "Enable the rendering of 3d sky boxes" );
++ConVar r_skybox( "r_skybox","1", FCVAR_CHEAT, "Enable the rendering of sky boxes" );
+ #ifdef TF_CLIENT_DLL
+ ConVar r_drawviewmodel( "r_drawviewmodel","1", FCVAR_ARCHIVE );
+ #else
+ ConVar r_drawviewmodel( "r_drawviewmodel","1", FCVAR_CHEAT );
+ #endif
+ static ConVar r_drawtranslucentrenderables( "r_drawtranslucentrenderables", "1", FCVAR_CHEAT );
+-static ConVar r_drawopaquerenderables( "r_drawopaquerenderables", "1", FCVAR_CHEAT );
++ConVar r_drawopaquerenderables( "r_drawopaquerenderables", "1", FCVAR_CHEAT );
+ static ConVar r_threaded_renderables( "r_threaded_renderables", "0" );
+ 
+ // FIXME: This is not static because we needed to turn it off for TF2 playtests
+@@ -137,7 +137,7 @@
+ static ConVar fog_endskybox( "fog_endskybox", "-1", FCVAR_CHEAT );
+ static ConVar fog_maxdensityskybox( "fog_maxdensityskybox", "-1", FCVAR_CHEAT );
+ static ConVar fog_colorskybox( "fog_colorskybox", "-1 -1 -1", FCVAR_CHEAT );
+-static ConVar fog_enableskybox( "fog_enableskybox", "1", FCVAR_CHEAT );
++ConVar fog_enableskybox( "fog_enableskybox", "1", FCVAR_CHEAT );
+ static ConVar fog_maxdensity( "fog_maxdensity", "-1", FCVAR_CHEAT );
+ 
+ 
+@@ -151,9 +151,9 @@
+ static ConVar r_waterforcereflectentities( "r_waterforcereflectentities", "0" );
+ static ConVar r_WaterDrawRefraction( "r_WaterDrawRefraction", "1", 0, "Enable water refraction" );
+ static ConVar r_WaterDrawReflection( "r_WaterDrawReflection", "1", 0, "Enable water reflection" );
+-static ConVar r_ForceWaterLeaf( "r_ForceWaterLeaf", "1", 0, "Enable for optimization to water - considers view in leaf under water for purposes of culling" );
++ConVar r_ForceWaterLeaf( "r_ForceWaterLeaf", "1", 0, "Enable for optimization to water - considers view in leaf under water for purposes of culling" );
+ static ConVar mat_drawwater( "mat_drawwater", "1", FCVAR_CHEAT );
+-static ConVar mat_clipz( "mat_clipz", "1" );
++ConVar mat_clipz( "mat_clipz", "1" );
+ 
+ 
+ //-----------------------------------------------------------------------------
+@@ -162,7 +162,7 @@
+ static ConVar r_screenfademinsize( "r_screenfademinsize", "0" );
+ static ConVar r_screenfademaxsize( "r_screenfademaxsize", "0" );
+ static ConVar cl_drawmonitors( "cl_drawmonitors", "1" );
+-static ConVar r_eyewaterepsilon( "r_eyewaterepsilon", "10.0f", FCVAR_CHEAT );
++ConVar r_eyewaterepsilon( "r_eyewaterepsilon", "10.0f", FCVAR_CHEAT );
+ 
+ #ifdef TF_CLIENT_DLL
+ static ConVar pyro_dof( "pyro_dof", "1", FCVAR_ARCHIVE );
+@@ -182,7 +182,7 @@
+ bool s_bCanAccessCurrentView = false;
+ IntroData_t *g_pIntroData = NULL;
+ static bool	g_bRenderingView = false;			// For debugging...
+-static int g_CurrentViewID = VIEW_NONE;
++int g_CurrentViewID = VIEW_NONE;
+ bool g_bRenderingScreenshot = false;
+ 
+ 
+@@ -221,8 +221,7 @@
+ 	}
+ }
+ 
+-
+-
++/*
+ //-----------------------------------------------------------------------------
+ // Describes a pruned set of leaves to be rendered this view. Reference counted
+ // because potentially shared by a number of views
+@@ -250,7 +249,7 @@
+ 	bool m_bPooledAlloc;
+ 	static CObjectPool<ClientWorldListInfo_t> gm_Pool;
+ };
+-
++*/
+ 
+ //-----------------------------------------------------------------------------
+ //
+@@ -367,6 +366,11 @@
+ 
+ CWorldListCache g_WorldListCache;
+ 
++void FlushWorldLists()
++{
++	g_WorldListCache.Flush();
++}
++
+ //-----------------------------------------------------------------------------
+ // Standard 3d skybox view
+ //-----------------------------------------------------------------------------
+@@ -747,7 +751,7 @@
+ //-----------------------------------------------------------------------------
+ //
+ //-----------------------------------------------------------------------------
+-static void SetClearColorToFogColor()
++void SetClearColorToFogColor()
+ {
+ 	unsigned char ucFogColor[3];
+ 	CMatRenderContextPtr pRenderContext( materials );
+@@ -942,7 +946,7 @@
+ // Purpose: 
+ // Output : Returns true on success, false on failure.
+ //-----------------------------------------------------------------------------
+-inline bool CViewRender::ShouldDrawEntities( void )
++bool CViewRender::ShouldDrawEntities( void )
+ {
+ 	return ( !m_pDrawEntities || (m_pDrawEntities->GetInt() != 0) );
+ }
+@@ -1324,7 +1328,7 @@
+ 	g_pClientShadowMgr->PreRender();
+ 
+ 	// Shadowed flashlights supported on ps_2_b and up...
+-	if ( r_flashlightdepthtexture.GetBool() && (viewID == VIEW_MAIN) )
++	if ( r_flashlightdepthtexture.GetBool() && (viewID == VIEW_MAIN) && !view.m_bDrawWorldNormal )
+ 	{
+ 		g_pClientShadowMgr->ComputeShadowDepthTextures( view );
+ 	}
+@@ -1370,7 +1374,7 @@
+ 	CGlowOverlay::DrawOverlays( view.m_bCacheFullSceneState );
+ 
+ 	// issue the pixel visibility tests
+-	if ( IsMainView( CurrentViewID() ) )
++	if ( IsMainView( CurrentViewID() ) && !view.m_bDrawWorldNormal )
+ 	{
+ 		PixelVisibility_EndCurrentView();
+ 	}
+@@ -1397,7 +1401,7 @@
+ 	FinishCurrentView();
+ 
+ 	// Free shadow depth textures for use in future view
+-	if ( r_flashlightdepthtexture.GetBool() )
++	if ( r_flashlightdepthtexture.GetBool() && viewID == VIEW_MAIN && !view.m_bDrawWorldNormal )
+ 	{
+ 		g_pClientShadowMgr->UnlockAllShadowDepthTextures();
+ 	}
+@@ -1637,7 +1641,7 @@
+ //-----------------------------------------------------------------------------
+ // Purpose: Returns the skybox fog color to use in rendering the current frame.
+ //-----------------------------------------------------------------------------
+-static void GetSkyboxFogColor( float *pColor )
++void GetSkyboxFogColor( float *pColor )
+ {			   
+ 	C_BasePlayer *pbp = C_BasePlayer::GetLocalPlayer();
+ 	if( !pbp )
+@@ -1685,7 +1689,7 @@
+ }
+ 
+ 
+-static float GetSkyboxFogStart( void )
++float GetSkyboxFogStart( void )
+ {
+ 	C_BasePlayer *pbp = C_BasePlayer::GetLocalPlayer();
+ 	if( !pbp )
+@@ -1711,7 +1715,7 @@
+ 	}
+ }
+ 
+-static float GetSkyboxFogEnd( void )
++float GetSkyboxFogEnd( void )
+ {
+ 	C_BasePlayer *pbp = C_BasePlayer::GetLocalPlayer();
+ 	if( !pbp )
+@@ -1738,7 +1742,7 @@
+ }
+ 
+ 
+-static float GetSkyboxFogMaxDensity()
++float GetSkyboxFogMaxDensity()
+ {
+ 	C_BasePlayer *pbp = C_BasePlayer::GetLocalPlayer();
+ 	if ( !pbp )
+@@ -3889,7 +3893,7 @@
+ 		else
+ 			continue;
+ 
+-		if ( g_pStudioStatsEntity != NULL && g_CurrentViewID == VIEW_MAIN && itEntity->m_pRenderable == g_pStudioStatsEntity )
++		if ( g_pStudioStatsEntity != NULL && ( g_CurrentViewID == VIEW_MAIN || g_CurrentViewID == VIEW_DEFERRED_GBUFFER ) && itEntity->m_pRenderable == g_pStudioStatsEntity )
+ 		{
+ 			DrawOpaqueRenderable( itEntity->m_pRenderable, false, DepthMode, STUDIO_GENERATE_STATS );
+ 			continue;
+@@ -4782,7 +4786,7 @@
+ 	}
+ 
+ 	render->BeginUpdateLightmaps();
+-	BuildWorldRenderLists( true, true, -1 );
++	BuildWorldRenderLists( true, -1, true );
+ 	BuildRenderableRenderLists( iSkyBoxViewID );
+ 	render->EndUpdateLightmaps();
+ 
+@@ -5386,19 +5390,21 @@
+ 
+ 	ERenderDepthMode DepthMode = DEPTH_MODE_NORMAL;
+ 
++	if (!m_bDrawWorldNormal)
++	{
+ 	if ( m_DrawFlags & DF_DRAW_ENTITITES )
+ 	{
+ 		DrawWorld( waterZAdjust );
+ 		DrawOpaqueRenderables( DepthMode );
+ 
+-#ifdef TF_CLIENT_DLL
++	#ifdef TF_CLIENT_DLL
+ 		bool bVisionOverride = ( localplayer_visionflags.GetInt() & ( 0x01 ) ); // Pyro-vision Goggles
+ 
+ 		if ( g_CurrentViewID == VIEW_MAIN && bVisionOverride && pyro_dof.GetBool() ) // Pyro-vision Goggles
+ 		{
+ 			DrawDepthOfField();
+ 		}
+-#endif
++	#endif
+ 		DrawTranslucentRenderables( false, false );
+ 		DrawNoZBufferTranslucentRenderables();
+ 	}
+@@ -5406,16 +5412,17 @@
+ 	{
+ 		DrawWorld( waterZAdjust );
+ 
+-#ifdef TF_CLIENT_DLL
++	#ifdef TF_CLIENT_DLL
+ 		bool bVisionOverride = ( localplayer_visionflags.GetInt() & ( 0x01 ) ); // Pyro-vision Goggles
+ 
+ 		if ( g_CurrentViewID == VIEW_MAIN && bVisionOverride && pyro_dof.GetBool() ) // Pyro-vision Goggles
+ 		{
+ 			DrawDepthOfField();
+ 		}
+-#endif
++	#endif
+ 		// Draw translucent world brushes only, no entities
+ 		DrawTranslucentWorldInLeaves( false );
++		}
+ 	}
+ 
+ 	// issue the pixel visibility tests for sub-views
+--- sp/src/game/client/viewrender.h	Tue Nov 21 03:17:52 2023
++++ sp/src/game/client/viewrender.h	Sat Jul 20 23:23:01 2024
+@@ -28,7 +28,7 @@
+ class IScreenSpaceEffect;
+ class CClientViewSetup;
+ class CViewRender;
+-struct ClientWorldListInfo_t;
++//struct ClientWorldListInfo_t;
+ class C_BaseEntity;
+ struct WriteReplayScreenshotParams_t;
+ class CReplayScreenshotTaker;
+@@ -78,6 +78,10 @@
+ 	VIEW_INTRO_CAMERA = 6,
+ 	VIEW_SHADOW_DEPTH_TEXTURE = 7,
+ 	VIEW_SSAO = 8,
++
++	VIEW_DEFERRED_GBUFFER = 9,
++	VIEW_DEFERRED_SHADOW = 10,
++
+ 	VIEW_ID_COUNT
+ };
+ view_id_t CurrentViewID();
+@@ -182,6 +186,34 @@
+ 	CViewRender *m_pMainView;
+ };
+ 
++//-----------------------------------------------------------------------------
++// Describes a pruned set of leaves to be rendered this view. Reference counted
++// because potentially shared by a number of views
++//-----------------------------------------------------------------------------
++struct ClientWorldListInfo_t : public CRefCounted1<WorldListInfo_t>
++{
++	ClientWorldListInfo_t()
++	{
++		memset( (WorldListInfo_t *)this, 0, sizeof(WorldListInfo_t) );
++		m_pActualLeafIndex = NULL;
++		m_bPooledAlloc = false;
++	}
++
++	// Allocate a list intended for pruning
++	static ClientWorldListInfo_t *AllocPooled( const ClientWorldListInfo_t &exemplar );
++
++	// Because we remap leaves to eliminate unused leaves, we need a remap
++	// when drawing translucent surfaces, which requires the *original* leaf index
++	// using m_pActualLeafMap[ remapped leaf index ] == actual leaf index
++	LeafIndex_t *m_pActualLeafIndex;
++
++private:
++	virtual bool OnFinalRelease();
++
++	bool m_bPooledAlloc;
++	static CObjectPool<ClientWorldListInfo_t> gm_Pool;
++};
++
+ //-----------------------------------------------------------------------------
+ // Base class for 3d views
+ //-----------------------------------------------------------------------------
+@@ -423,7 +455,7 @@
+ 	{
+ 		m_UnderWaterOverlayMaterial.Init( pMaterial );
+ 	}
+-private:
++protected:
+ 	int				m_BuildWorldListsNumber;
+ 
+ 
+--- sp/src/game/server/gameinterface.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/server/gameinterface.cpp	Sun Jul 21 18:47:12 2024
+@@ -129,6 +129,8 @@
+ #include "replay/ireplaysystem.h"
+ #endif
+ 
++#include "deferred/deferred_shared_common.h"
++
+ extern IToolFrameworkServer *g_pToolFrameworkServer;
+ extern IParticleSystemQuery *g_pParticleSystemQuery;
+ 
+@@ -189,6 +191,8 @@
+ 
+ IGameSystem *SoundEmitterSystem();
+ 
++IGameSystem *DeferredManagerSystem();
++
+ bool ModelSoundsCacheInit();
+ void ModelSoundsCacheShutdown();
+ 
+@@ -700,6 +704,8 @@
+ 	// Add sound emitter
+ 	IGameSystem::Add( SoundEmitterSystem() );
+ 
++	if (CommandLine() && CommandLine()->FindParm( "-nodeferred" ) == 0) IGameSystem::Add( DeferredManagerSystem() );
++
+ 	// load Mod specific game events ( MUST be before InitAllSystems() so it can pickup the mod specific events)
+ 	gameeventmanager->LoadEventsFromFile("resource/ModEvents.res");
+ 
+@@ -1431,6 +1437,8 @@
+ 	g_pStringTableClientSideChoreoScenes = networkstringtable->CreateStringTable( "Scenes", MAX_CHOREO_SCENES_STRINGS );
+ 	g_pStringTableServerMapCycle = networkstringtable->CreateStringTable( "ServerMapCycle", 128 );
+ 
++	g_pStringTable_LightCookies = networkstringtable->CreateStringTable( COOKIE_STRINGTBL_NAME, MAX_COOKIE_TEXTURES );
++
+ #ifdef TF_DLL
+ 	g_pStringTableServerPopFiles = networkstringtable->CreateStringTable( "ServerPopFiles", 128 );
+ 	g_pStringTableServerMapCycleMvM = networkstringtable->CreateStringTable( "ServerMapCycleMvM", 128 );
+@@ -1450,8 +1458,8 @@
+ 			g_pStringTableInfoPanel &&
+ 			g_pStringTableClientSideChoreoScenes &&
+ 			g_pStringTableServerMapCycle && 
+-			bPopFilesValid
+-			);
++			bPopFilesValid &&
++			g_pStringTable_LightCookies	);
+ 
+ 	// Need this so we have the error material always handy
+ 	PrecacheMaterial( "debug/debugempty" );
+--- sp/src/game/server/lights.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/game/server/lights.cpp	Sat Jul 20 23:25:10 2024
+@@ -9,6 +9,9 @@
+ #include "lights.h"
+ #include "world.h"
+ 
++#include "deferred/deferred_shared_common.h"
++#include "deferred/cdeferred_manager_server.h"
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -22,6 +25,7 @@
+ 	DEFINE_KEYFIELD( m_iStyle, FIELD_INTEGER, "style" ),
+ 	DEFINE_KEYFIELD( m_iDefaultStyle, FIELD_INTEGER, "defaultstyle" ),
+ 	DEFINE_KEYFIELD( m_iszPattern, FIELD_STRING, "pattern" ),
++	DEFINE_KEYFIELD( m_iszColor, FIELD_STRING, "_light" ),
+ 
+ 	// Fuctions
+ 	DEFINE_FUNCTION( FadeThink ),
+@@ -76,7 +80,7 @@
+ 		if (FBitSet(m_spawnflags, SF_LIGHT_START_OFF))
+ 			engine->LightStyle(m_iStyle, "a");
+ 		else if (m_iszPattern != NULL_STRING)
+-			engine->LightStyle(m_iStyle, (char *)STRING( m_iszPattern ));
++			engine->LightStyle(m_iStyle, STRING( m_iszPattern ));
+ 		else
+ 			engine->LightStyle(m_iStyle, "m");
+ 	}
+@@ -101,7 +105,7 @@
+ {
+ 	if ( m_iszPattern != NULL_STRING )
+ 	{
+-		engine->LightStyle( m_iStyle, (char *) STRING( m_iszPattern ) );
++		engine->LightStyle( m_iStyle, STRING( m_iszPattern ) );
+ 	}
+ 	else
+ 	{
+@@ -169,7 +173,7 @@
+ void CLight::InputSetPattern( inputdata_t &inputdata )
+ {
+ 	m_iszPattern = inputdata.value.StringID();
+-	engine->LightStyle(m_iStyle, (char *)STRING( m_iszPattern ));
++	engine->LightStyle(m_iStyle, STRING( m_iszPattern ));
+ 
+ 	// Light is on if pattern is set
+ 	CLEARBITS(m_spawnflags, SF_LIGHT_START_OFF);
+@@ -210,7 +214,7 @@
+ 	// If we're done fading instantiate our light pattern and stop thinking
+ 	if (m_iCurrentFade == m_iTargetFade)
+ 	{
+-		engine->LightStyle(m_iStyle, (char *)STRING( m_iszPattern ));
++		engine->LightStyle(m_iStyle, STRING( m_iszPattern ));
+ 		SetNextThink( TICK_NEVER_THINK );
+ 	}
+ 	// Otherwise instantiate our current fade value and keep thinking
+@@ -233,13 +237,19 @@
+ LINK_ENTITY_TO_CLASS( light_glspot, CLight );
+ 
+ 
+-class CEnvLight : public CLight
++class CEnvLight : public CServerOnlyPointEntity
+ {
+ public:
+-	DECLARE_CLASS( CEnvLight, CLight );
++	DECLARE_CLASS( CEnvLight, CServerOnlyPointEntity );
+ 
+ 	bool	KeyValue( const char *szKeyName, const char *szValue ); 
+-	void	Spawn( void );
++
++	void	Activate( void );
++
++private:
++	float m_vecLight[4];
++	float m_vecAmbientLight[4];
++	float m_fLightPitch;
+ };
+ 
+ LINK_ENTITY_TO_CLASS( light_environment, CEnvLight );
+@@ -249,17 +259,49 @@
+ 	if (FStrEq(szKeyName, "_light"))
+ 	{
+ 		// nothing
++		UTIL_StringToFloatArray( m_vecLight, 4,  szValue );
+ 	}
+ 	else
+ 	{
++		if( FStrEq(szKeyName, "pitch") )
++		{
++			m_fLightPitch = atof( szValue );
++		}
++		else if( FStrEq(szKeyName, "_ambient") )
++		{
++			UTIL_StringToFloatArray( m_vecAmbientLight, 4,  szValue );
++		}
+ 		return BaseClass::KeyValue( szKeyName, szValue );
+ 	}
+ 
+ 	return true;
+ }
+ 
+-
+-void CEnvLight::Spawn( void )
++void CEnvLight::Activate( void )
+ {
+-	BaseClass::Spawn( );
+-}
++	BaseClass::Activate( );
++
++	if ( GetGlobalLight() == NULL )
++	{
++		CBaseEntity *pGlobalLight = CreateEntityByName( "light_deferred_global" );
++		if( pGlobalLight )
++		{
++			float ds = r_deferred_autoenvlight_diffuse_intensity.GetFloat();
++			float asl = r_deferred_autoenvlight_ambient_intensity_low.GetFloat();
++			float ash = r_deferred_autoenvlight_ambient_intensity_high.GetFloat();
++
++			const QAngle &vecAngles = GetAbsAngles();
++			pGlobalLight->KeyValue( "origin", UTIL_VarArgs("%f %f %f", GetAbsOrigin().x, GetAbsOrigin().y, GetAbsOrigin().z ) );
++			pGlobalLight->KeyValue( "diffuse", UTIL_VarArgs("%f %f %f %f", m_vecLight[0], m_vecLight[1], m_vecLight[2], m_vecLight[3] * ds ) );
++			pGlobalLight->KeyValue( "ambient_high", UTIL_VarArgs("%f %f %f %f", m_vecAmbientLight[0], m_vecAmbientLight[1], m_vecAmbientLight[2], m_vecAmbientLight[3] * ash ) );
++			pGlobalLight->KeyValue( "ambient_low", UTIL_VarArgs("%f %f %f %f", m_vecAmbientLight[0], m_vecAmbientLight[1], m_vecAmbientLight[2], m_vecAmbientLight[3] * asl ) );
++			pGlobalLight->KeyValue( "spawnflags", "3" );
++			pGlobalLight->KeyValue( "angles", UTIL_VarArgs("%f %f %f", -m_fLightPitch, vecAngles.y, vecAngles.z ) );
++			static_cast<CDeferredLightGlobal*>( pGlobalLight )->bGenerated = true;
++			DispatchSpawn( pGlobalLight );
++			//pGlobalLight->Activate(); // Should not be activated here: the global light is created before the level activates all entities.
++		}
++	}
++
++	UTIL_Remove( this );
++}
+\ No newline at end of file
+--- sp/src/game/server/lights.h	Tue Nov 21 03:17:52 2023
++++ sp/src/game/server/lights.h	Sat Jul 20 23:25:23 2024
+@@ -43,6 +43,7 @@
+ 	string_t m_iszPattern;
+ 	char	m_iCurrentFade;
+ 	char	m_iTargetFade;
++	string_t m_iszColor;
+ };
+ 
+ #endif // LIGHTS_H
+--- sp/src/materialsystem/stdshaders/BaseVSShader.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/materialsystem/stdshaders/BaseVSShader.cpp	Sat Jul 20 23:34:25 2024
+@@ -47,7 +47,7 @@
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+-static ConVar mat_fullbright( "mat_fullbright","0", FCVAR_CHEAT );
++ConVar mat_fullbright( "mat_fullbright","0", FCVAR_CHEAT );
+ 
+ // These functions are to be called from the shaders.
+ 
+@@ -838,6 +838,7 @@
+ 	}
+ }
+ 
++#endif
+ 
+ //-----------------------------------------------------------------------------
+ // Sets up hw morphing state for the vertex shader
+@@ -866,6 +867,7 @@
+ #endif
+ }
+ 
++#ifndef GAME_SHADER_DLL
+ 
+ //-----------------------------------------------------------------------------
+ // Vertex shader unlit generic pass
+--- sp/src/materialsystem/stdshaders/BaseVSShader.h	Tue Nov 21 03:17:52 2023
++++ sp/src/materialsystem/stdshaders/BaseVSShader.h	Sat Jul 20 23:34:42 2024
+@@ -253,10 +253,11 @@
+ 										   int baseTextureFrame2Var,
+ 										   bool bSSBump
+ 		);
+-	
++#endif
+ 	// Sets up hw morphing state for the vertex shader
+ 	void SetHWMorphVertexShaderState( int nDimConst, int nSubrectConst, VertexTextureSampler_t morphSampler );
+ 
++#ifndef GAME_SHADER_DLL
+ 	// Computes the shader index for vertex lit materials
+ 	int ComputeVertexLitShaderIndex( bool bVertexLitGeneric, bool hasBump, bool hasEnvmap, bool hasVertexColor, bool bHasNormal ) const;
+ 
+--- sp/src/materialsystem/stdshaders/commandbuilder.h	Tue Nov 21 03:17:52 2023
++++ sp/src/materialsystem/stdshaders/commandbuilder.h	Sat Jul 20 23:35:15 2024
+@@ -20,7 +20,7 @@
+ #pragma once
+ #endif
+ 
+-extern ConVar	my_mat_fullbright;
++extern ConVar	mat_fullbright;
+ 
+ template<int N> class CFixedCommandStorageBuffer
+ {
+@@ -96,6 +96,13 @@
+ 		return m_pDataOut - m_Data;
+ 	}
+ 
++	FORCEINLINE uint8 *Copy()
++	{
++		int size = Size();
++		uint8 *tmp = new uint8[ size ];
++		Q_memcpy( tmp, m_Data, size );
++		return  tmp;
++	}
+ };
+ 
+ template<class S> class CCommandBufferBuilder
+@@ -165,6 +172,21 @@
+ 		OutputConstantData( pSrcData );
+ 	}
+ 
++	FORCEINLINE void SetPixelShaderConstant1( int nFirstConstant, float flVal0 )
++	{
++		SetPixelShaderConstant4( nFirstConstant, flVal0, 0, 0, 0 );
++	}
++
++	FORCEINLINE void SetPixelShaderConstant2( int nFirstConstant, float flVal0, float flVal1 )
++	{
++		SetPixelShaderConstant4( nFirstConstant, flVal0, flVal1, 0, 0 );
++	}
++
++	FORCEINLINE void SetPixelShaderConstant3( int nFirstConstant, float flVal0, float flVal1, float flVal2 )
++	{
++		SetPixelShaderConstant4( nFirstConstant, flVal0, flVal1, flVal2, 0 );
++	}
++
+ 	FORCEINLINE void SetPixelShaderConstant4( int nFirstConstant, float flVal0, float flVal1, float flVal2, float flVal3 )
+ 	{
+ 		SetPixelShaderConstants( nFirstConstant, 1 );
+@@ -266,7 +288,7 @@
+ 
+ 	FORCEINLINE void SetEnvMapTintPixelShaderDynamicState( int pixelReg, int tintVar )
+ 	{
+-		if( g_pConfig->bShowSpecular && my_mat_fullbright.GetInt() != 2 )
++		if( g_pConfig->bShowSpecular && mat_fullbright.GetInt() != 2 )
+ 		{
+ 			SetPixelShaderConstant( pixelReg, Param( tintVar)->GetVecValue() );
+ 		}
+@@ -278,7 +300,7 @@
+ 
+ 	FORCEINLINE void SetEnvMapTintPixelShaderDynamicStateGammaToLinear( int pixelReg, int tintVar, float flAlphaValue = 1.0 )
+ 	{
+-		if( ( tintVar != -1 ) && g_pConfig->bShowSpecular && my_mat_fullbright.GetInt() != 2 )
++		if( ( tintVar != -1 ) && g_pConfig->bShowSpecular && mat_fullbright.GetInt() != 2 )
+ 		{
+ 			float color[4];
+ 			color[3] = flAlphaValue;
+@@ -339,7 +361,7 @@
+ 		}
+ 	}
+ 
+-	FORCEINLINE void BindTexture( CBaseVSShader *pShader, Sampler_t nSampler, int nTextureVar, int nFrameVar )
++	FORCEINLINE void BindTexture( CBaseVSShader *pShader, Sampler_t nSampler, int nTextureVar, int nFrameVar = -1 )
+ 	{
+ 		ShaderAPITextureHandle_t hTexture = pShader->GetShaderAPITextureBindHandle( nTextureVar, nFrameVar );
+ 		BindTexture( nSampler, hTexture );
+@@ -399,8 +421,10 @@
+ 		return m_Storage.Base();
+ 	}
+ 
+-
+-
++	FORCEINLINE uint8 *Copy( void )
++	{
++		return m_Storage.Copy();
++	}
+ };
+ 
+ 
+--- sp/src/materialsystem/stdshaders/shader_constant_register_map.h	Tue Nov 21 03:17:52 2023
++++ sp/src/materialsystem/stdshaders/shader_constant_register_map.h	Sat Jul 20 23:38:36 2024
+@@ -9,6 +9,25 @@
+ #include "common_vertexlitgeneric_dx9.h"
+ #endif
+ 
++#define SSEREG_AMBIENT_CUBE PSREG_CONSTANT_00
++//#define SSEREG_AMBIENT_CUBE PSREG_CONSTANT_01
++//#define SSEREG_AMBIENT_CUBE PSREG_CONSTANT_02
++//#define SSEREG_AMBIENT_CUBE PSREG_CONSTANT_03
++//#define SSEREG_AMBIENT_CUBE PSREG_CONSTANT_04
++//#define SSEREG_AMBIENT_CUBE PSREG_CONSTANT_05
++#define SSEREG_LIGHT_INFO_ARRAY PSREG_CONSTANT_06
++//#define SSEREG_LIGHT_INFO_ARRAY PSREG_CONSTANT_07
++//#define SSEREG_LIGHT_INFO_ARRAY PSREG_CONSTANT_08
++//#define SSEREG_LIGHT_INFO_ARRAY PSREG_CONSTANT_09
++//#define SSEREG_LIGHT_INFO_ARRAY PSREG_CONSTANT_10
++//#define SSEREG_LIGHT_INFO_ARRAY PSREG_CONSTANT_11
++#define SSEREG_FLASHLIGHT_TO_WORLD_TEXTURE		PSREG_CONSTANT_12
++//#define SSEREG_FLASHLIGHT_TO_WORLD_TEXTURE		PSREG_CONSTANT_13
++//#define SSEREG_FLASHLIGHT_TO_WORLD_TEXTURE		PSREG_CONSTANT_14
++//#define SSEREG_FLASHLIGHT_TO_WORLD_TEXTURE		PSREG_CONSTANT_15
++
++// don't use 30!
++
+ #define PSREG_SELFILLUMTINT						PSREG_CONSTANT_00
+ #define PSREG_DIFFUSE_MODULATION				PSREG_CONSTANT_01
+ #define PSREG_ENVMAP_TINT__SHADOW_TWEAKS		PSREG_CONSTANT_02
+--- sp/src/public/cdll_int.h	Tue Nov 21 03:17:52 2023
++++ sp/src/public/cdll_int.h	Sat Jul 20 23:29:05 2024
+@@ -42,7 +42,7 @@
+ class VMatrix;
+ struct ScreenFade_t;
+ struct ScreenShake_t;
+-class CViewSetup;
++class CViewSetupEngine;
+ class CEngineSprite;
+ class CGlobalVarsBase;
+ class CPhysCollide;
+@@ -655,7 +655,7 @@
+ 
+ 	// Allow engine to expressly render a view (e.g., during timerefresh)
+ 	// See IVRenderView.h, PushViewFlags_t for nFlags values
+-	virtual void			RenderView( const CViewSetup &view, int nClearFlags, int whatToDraw ) = 0;
++	virtual void			RenderView( const CViewSetupEngine &view, int nClearFlags, int whatToDraw ) = 0;
+ 
+ 	// Apply screen fade directly from engine
+ 	virtual void			View_Fade( ScreenFade_t *pSF ) = 0;
+@@ -733,7 +733,7 @@
+ 	virtual void			WriteSaveGameScreenshotOfSize( const char *pFilename, int width, int height, bool bCreatePowerOf2Padded = false, bool bWriteVTF = false ) = 0;
+ 
+ 	// Gets the current view
+-	virtual bool			GetPlayerView( CViewSetup &playerView ) = 0;
++	virtual bool			GetPlayerView( CViewSetupEngine &playerView ) = 0;
+ 
+ 	// Matchmaking
+ 	virtual void			SetupGameProperties( CUtlVector< XUSER_CONTEXT > &contexts, CUtlVector< XUSER_PROPERTY > &properties ) = 0;
+--- sp/src/public/ivrenderview.h	Tue Nov 21 03:17:52 2023
++++ sp/src/public/ivrenderview.h	Sat Jul 20 23:29:19 2024
+@@ -22,7 +22,7 @@
+ //-----------------------------------------------------------------------------
+ // Forward declarations
+ //-----------------------------------------------------------------------------
+-class CViewSetup;
++class CViewSetupEngine;
+ class CEngineSprite;
+ class IClientEntity;
+ class IMaterial;
+@@ -286,8 +286,8 @@
+ 	virtual void			VGui_Paint( int mode ) = 0;
+ 
+ 	// Push, pop views (see PushViewFlags_t above for flags)
+-	virtual void			Push3DView( const CViewSetup &view, int nFlags, ITexture* pRenderTarget, Frustum frustumPlanes ) = 0;
+-	virtual void			Push2DView( const CViewSetup &view, int nFlags, ITexture* pRenderTarget, Frustum frustumPlanes ) = 0;
++	virtual void			Push3DView( const CViewSetupEngine &view, int nFlags, ITexture* pRenderTarget, Frustum frustumPlanes ) = 0;
++	virtual void			Push2DView( const CViewSetupEngine &view, int nFlags, ITexture* pRenderTarget, Frustum frustumPlanes ) = 0;
+ 	virtual void			PopView( Frustum frustumPlanes ) = 0;
+ 
+ 	// Sets the main view
+@@ -310,8 +310,8 @@
+ 	virtual void			EndUpdateLightmaps( void ) = 0;
+ 	virtual void			OLD_SetOffCenterProjectionMatrix( float fov, float zNear, float zFar, float flAspectRatio, float flBottom, float flTop, float flLeft, float flRight ) = 0;
+ 	virtual void			OLD_SetProjectionMatrixOrtho( float left, float top, float right, float bottom, float zNear, float zFar ) = 0;
+-	virtual void			Push3DView( const CViewSetup &view, int nFlags, ITexture* pRenderTarget, Frustum frustumPlanes, ITexture* pDepthTexture ) = 0;
+-	virtual void			GetMatricesForView( const CViewSetup &view, VMatrix *pWorldToView, VMatrix *pViewToProjection, VMatrix *pWorldToProjection, VMatrix *pWorldToPixels ) = 0;
++	virtual void			Push3DView( const CViewSetupEngine &view, int nFlags, ITexture* pRenderTarget, Frustum frustumPlanes, ITexture* pDepthTexture ) = 0;
++	virtual void			GetMatricesForView( const CViewSetupEngine &view, VMatrix *pWorldToView, VMatrix *pViewToProjection, VMatrix *pWorldToProjection, VMatrix *pWorldToPixels ) = 0;
+ 	virtual void			DrawBrushModelEx( IClientEntity *baseentity, model_t *model, const Vector& origin, const QAngle& angles, DrawBrushModelMode_t mode ) = 0;
+ };
+ 
+--- sp/src/public/renderparm.h	Tue Nov 21 03:17:52 2023
++++ sp/src/public/renderparm.h	Sun Jul 21 18:49:46 2024
+@@ -52,6 +52,12 @@
+ 
+ 	INT_RENDERPARM_BACK_BUFFER_INDEX,
+ 
++	INT_RENDERPARM_DEFERRED_RENDER_STAGE,
++	INT_RENDERPARM_DEFERRED_SHADOW_MODE,
++	INT_RENDERPARM_DEFERRED_SHADOW_INDEX,
++	INT_RENDERPARM_DEFERRED_SHADOW_RADIOSITY,
++	INT_RENDERPARM_DEFERRED_RADIOSITY_CASCADE,
++
+ 	MAX_INT_RENDER_PARMS = 20
+ };
+ 
+@@ -71,5 +77,13 @@
+ #define ENABLE_FIXED_LIGHTING_BASICLIGHT 1
+ #define ENABLE_FIXED_LIGHTING_OUTPUTMRTS_FOR_DEFERRED_LIGHTING 2
+ #define ENABLE_FIXED_LIGHTING_OUTPUTNORMAL_AND_DEPTH 3
++
++enum
++{
++	DEFERRED_RENDER_STAGE_INVALID = 0,
++	DEFERRED_RENDER_STAGE_GBUFFER,
++	DEFERRED_RENDER_STAGE_SHADOWPASS,
++	DEFERRED_RENDER_STAGE_COMPOSITION,
++};
+ 
+ #endif // RENDERPARM_H
+--- sp/src/public/view_shared.h	Tue Nov 21 03:17:52 2023
++++ sp/src/public/view_shared.h	Sat Jul 20 23:29:44 2024
+@@ -41,10 +41,10 @@
+ //-----------------------------------------------------------------------------
+ // Purpose: Renderer setup data.  
+ //-----------------------------------------------------------------------------
+-class CViewSetup
++class CViewSetupEngine
+ {
+ public:
+-	CViewSetup()
++	CViewSetupEngine()
+ 	{
+ 		m_flAspectRatio = 0.0f;
+ 		m_bRenderToSubrectOfLargerScreen = false;
+@@ -131,6 +131,23 @@
+     VMatrix     m_ViewToProjection;
+ };
+ 
++class CViewSetup : public CViewSetupEngine
++{
++public:
++	CViewSetup()
++	{
++		m_bDrawWorldNormal = false;
++	}
++
++	explicit CViewSetup(const CViewSetupEngine& other)
++	{
++		memcpy(static_cast<CViewSetupEngine*>(this), &other, sizeof(CViewSetupEngine));
++		
++		m_bDrawWorldNormal = false;
++	}
++
++	bool m_bDrawWorldNormal;
++};
+ 
+ 
+ #endif // VIEW_SHARED_H
+--- sp/src/public/mathlib/vector.h	Tue Nov 21 03:17:52 2023
++++ sp/src/public/mathlib/vector.h	Sat Jul 20 23:30:15 2024
+@@ -190,6 +190,8 @@
+ 	Vector	operator-(const Vector& v) const;	
+ 	Vector	operator*(const Vector& v) const;	
+ 	Vector	operator/(const Vector& v) const;	
++	Vector	operator+(float fl) const;
++	Vector	operator-(float fl) const;
+ 	Vector	operator*(float fl) const;
+ 	Vector	operator/(float fl) const;			
+ 	
+@@ -1387,6 +1389,16 @@
+ 	Vector res;
+ 	VectorSubtract( *this, v, res );
+ 	return res;	
++}
++
++inline Vector Vector::operator+(float fl) const
++{
++	return Vector(x + fl, y + fl, z + fl);
++}
++
++inline Vector Vector::operator-(float fl) const
++{
++	return Vector(x - fl, y - fl, z - fl);
+ }
+ 
+ inline Vector Vector::operator*(float fl) const	
+--- sp/src/public/mathlib/vector4d.h	Tue Nov 21 03:17:52 2023
++++ sp/src/public/mathlib/vector4d.h	Sat Jul 20 23:30:25 2024
+@@ -40,10 +40,12 @@
+ 	// Construction/destruction
+ 	Vector4D(void);
+ 	Vector4D(vec_t X, vec_t Y, vec_t Z, vec_t W);
++	Vector4D(const Vector &base, vec_t W = 0.f);
+ 	Vector4D(const float *pFloat);
+ 
+ 	// Initialization
+ 	void Init(vec_t ix=0.0f, vec_t iy=0.0f, vec_t iz=0.0f, vec_t iw=0.0f);
++	void Init(const Vector &base, vec_t iw=0.0f);
+ 
+ 	// Got any nasty NAN's?
+ 	bool IsValid() const;
+@@ -78,6 +80,13 @@
+ 	Vector4D&	operator/=(const Vector4D &v);		
+ 	Vector4D&	operator/=(float s);					
+ 
++	Vector4D	operator-( void ) const;
++	Vector4D	operator*( float fl ) const;
++	Vector4D	operator/( float fl ) const;
++	Vector4D	operator*( const Vector4D& v ) const;
++	Vector4D	operator+( const Vector4D& v ) const;
++	Vector4D	operator-( const Vector4D& v ) const;
++
+ 	// negate the Vector4D components
+ 	void	Negate(); 
+ 
+@@ -215,6 +224,12 @@
+ 	Assert( IsValid() );
+ }
+ 
++inline Vector4D::Vector4D(const Vector &base, vec_t W )
++{
++	x = base.x; y = base.y; z = base.z; w = W;
++	Assert( IsValid() );
++}
++
+ inline Vector4D::Vector4D(const float *pFloat)					
+ {
+ 	Assert( pFloat );
+@@ -243,6 +258,12 @@
+ 	Assert( IsValid() );
+ }
+ 
++inline void Vector4D::Init( const Vector &base, vec_t iw )
++{
++	x = base.x; y = base.y; z = base.z;	w = iw;
++	Assert( IsValid() );
++}
++
+ inline void Vector4D::Random( vec_t minVal, vec_t maxVal )
+ {
+ 	x = minVal + ((vec_t)rand() / VALVE_RAND_MAX) * (maxVal - minVal);
+@@ -432,6 +453,46 @@
+ 	w /= v.w;
+ 	Assert( IsValid() );
+ 	return *this;
++}
++
++inline Vector4D Vector4D::operator-(void) const
++{
++	return Vector4D( -x, -y, -z, -w );
++}
++
++inline Vector4D Vector4D::operator+(const Vector4D& v) const
++{
++	Vector4D res;
++	Vector4DAdd( *this, v, res );
++	return res;
++}
++
++inline Vector4D Vector4D::operator-(const Vector4D& v) const
++{
++	Vector4D res;
++	Vector4DSubtract( *this, v, res );
++	return res;
++}
++
++inline Vector4D Vector4D::operator*(float fl) const
++{
++	Vector4D res;
++	Vector4DMultiply( *this, fl, res );
++	return res;
++}
++
++inline Vector4D Vector4D::operator*(const Vector4D& v) const
++{
++	Vector4D res;
++	Vector4DMultiply( *this, v, res );
++	return res;
++}
++
++inline Vector4D Vector4D::operator/(float fl) const
++{
++	Vector4D res;
++	Vector4DDivide( *this, fl, res );
++	return res;
+ }
+ 
+ inline void Vector4DAdd( Vector4D const& a, Vector4D const& b, Vector4D& c )
+--- sp/src/public/tier1/KeyValues.h	Tue Nov 21 03:17:52 2023
++++ sp/src/public/tier1/KeyValues.h	Sun Jul 21 18:50:28 2024
+@@ -176,6 +176,7 @@
+ 	void *GetPtr( const char *keyName = NULL, void *defaultValue = (void*)0 );
+ 	bool GetBool( const char *keyName = NULL, bool defaultValue = false );
+ 	Color GetColor( const char *keyName = NULL /* default value is all black */);
++	Color GetColor( const char *keyName, Color defaultValue);
+ 	bool  IsEmpty(const char *keyName = NULL);
+ 
+ 	// Data access
+--- sp/src/tier1/KeyValues.cpp	Tue Nov 21 03:17:52 2023
++++ sp/src/tier1/KeyValues.cpp	Sun Jul 21 18:50:43 2024
+@@ -1490,6 +1490,43 @@
+ //-----------------------------------------------------------------------------
+ // Purpose: Sets a color
+ //-----------------------------------------------------------------------------
++Color KeyValues::GetColor( const char *keyName, Color color )
++{
++	KeyValues *dat = FindKey( keyName, false );
++	if ( dat )
++	{
++		if ( dat->m_iDataType == TYPE_COLOR )
++		{
++			color[0] = dat->m_Color[0];
++			color[1] = dat->m_Color[1];
++			color[2] = dat->m_Color[2];
++			color[3] = dat->m_Color[3];
++		}
++		else if ( dat->m_iDataType == TYPE_FLOAT )
++		{
++			color[0] = dat->m_flValue;
++		}
++		else if ( dat->m_iDataType == TYPE_INT )
++		{
++			color[0] = dat->m_iValue;
++		}
++		else if ( dat->m_iDataType == TYPE_STRING )
++		{
++			// parse the colors out of the string
++			float a = 0.0f, b = 0.0f, c = 0.0f, d = 0.0f;
++			sscanf(dat->m_sValue, "%f %f %f %f", &a, &b, &c, &d);
++			color[0] = (unsigned char)a;
++			color[1] = (unsigned char)b;
++			color[2] = (unsigned char)c;
++			color[3] = (unsigned char)d;
++		}
++	}
++	return color;
++}
++
++//-----------------------------------------------------------------------------
++// Purpose: Sets a color
++//-----------------------------------------------------------------------------
+ void KeyValues::SetColor( const char *keyName, Color value)
+ {
+ 	KeyValues *dat = FindKey( keyName, true );
