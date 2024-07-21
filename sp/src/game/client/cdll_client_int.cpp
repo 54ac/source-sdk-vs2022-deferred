@@ -169,6 +169,8 @@ extern vgui::IInputInternal *g_InputInternal;
 #include "sixense/in_sixense.h"
 #endif
 
+#include "deferred/deferred_shared_common.h"
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -635,7 +637,7 @@ public:
 
 
 	virtual void					View_Render( vrect_t *rect );
-	virtual void					RenderView( const CViewSetup &view, int nClearFlags, int whatToDraw );
+	virtual void					RenderView( const CViewSetupEngine &view, int nClearFlags, int whatToDraw );
 	virtual void					View_Fade( ScreenFade_t *pSF );
 	
 	virtual void					SetCrosshairAngle( const QAngle& angle );
@@ -689,7 +691,7 @@ public:
 	virtual void			WriteSaveGameScreenshotOfSize( const char *pFilename, int width, int height, bool bCreatePowerOf2Padded/*=false*/, bool bWriteVTF/*=false*/ );
 
 	// Gets the location of the player viewpoint
-	virtual bool			GetPlayerView( CViewSetup &playerView );
+	virtual bool			GetPlayerView( CViewSetupEngine &playerView );
 
 	// Matchmaking
 	virtual void			SetupGameProperties( CUtlVector< XUSER_CONTEXT > &contexts, CUtlVector< XUSER_PROPERTY > &properties );
@@ -1502,7 +1504,7 @@ void CHLClient::View_Render( vrect_t *rect )
 //-----------------------------------------------------------------------------
 // Gets the location of the player viewpoint
 //-----------------------------------------------------------------------------
-bool CHLClient::GetPlayerView( CViewSetup &playerView )
+bool CHLClient::GetPlayerView( CViewSetupEngine &playerView )
 {
 	playerView = *g_pView->GetPlayerViewSetup();
 	return true;
@@ -1659,6 +1661,8 @@ void CHLClient::ResetStringTablePointers()
 	g_pStringTableInfoPanel = NULL;
 	g_pStringTableClientSideChoreoScenes = NULL;
 	g_pStringTableServerMapCycle = NULL;
+
+	g_pStringTable_LightCookies = NULL;
 
 #ifdef TF_CLIENT_DLL
 	g_pStringTableServerPopFiles = NULL;
@@ -1889,6 +1893,12 @@ void CHLClient::InstallStringTableCallback( const char *tableName )
 	else if ( !Q_strcasecmp( tableName, "ServerMapCycle" ) )
 	{
 		g_pStringTableServerMapCycle = networkstringtable->FindTable( tableName );
+	}
+	else if ( !Q_strcasecmp( tableName, COOKIE_STRINGTBL_NAME ) )
+	{
+		g_pStringTable_LightCookies = networkstringtable->FindTable( tableName );
+
+		g_pStringTable_LightCookies->SetStringChangedCallback( NULL, OnCookieTableChanged );
 	}
 #ifdef TF_CLIENT_DLL
 	else if ( !Q_strcasecmp( tableName, "ServerPopFiles" ) )
@@ -2484,9 +2494,10 @@ void CHLClient::WriteSaveGameScreenshotOfSize( const char *pFilename, int width,
 }
 
 // See RenderViewInfo_t
-void CHLClient::RenderView( const CViewSetup &setup, int nClearFlags, int whatToDraw )
+void CHLClient::RenderView( const CViewSetupEngine &engineSetup, int nClearFlags, int whatToDraw )
 {
 	VPROF("RenderView");
+	CViewSetup setup( engineSetup );
 	g_pView->RenderView( setup, nClearFlags, whatToDraw );
 }
 

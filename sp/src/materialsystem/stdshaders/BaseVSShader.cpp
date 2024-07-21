@@ -47,7 +47,7 @@
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
-static ConVar mat_fullbright( "mat_fullbright","0", FCVAR_CHEAT );
+ConVar mat_fullbright( "mat_fullbright","0", FCVAR_CHEAT );
 
 // These functions are to be called from the shaders.
 
@@ -838,6 +838,7 @@ const char *CBaseVSShader::UnlitGeneric_ComputePixelShaderName( bool bMask,
 	}
 }
 
+#endif
 
 //-----------------------------------------------------------------------------
 // Sets up hw morphing state for the vertex shader
@@ -866,6 +867,7 @@ void CBaseVSShader::SetHWMorphVertexShaderState( int nDimConst, int nSubrectCons
 #endif
 }
 
+#ifndef GAME_SHADER_DLL
 
 //-----------------------------------------------------------------------------
 // Vertex shader unlit generic pass

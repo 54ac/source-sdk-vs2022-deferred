@@ -1,6 +1,6 @@
 //========= Copyright Valve Corporation, All rights reserved. ============//
 //
-// Purpose: 
+// Purpose:
 //
 // $NoKeywords: $
 //
@@ -22,7 +22,7 @@
 extern IVDebugOverlay *debugoverlay;
 
 
-enum WinSide_t 
+enum WinSide_t
 {
 	WIN_SIDE_BOTTOM,
 	WIN_SIDE_RIGHT,
@@ -30,11 +30,11 @@ enum WinSide_t
 	WIN_SIDE_LEFT,
 };
 
-enum WinEdge_t 
+enum WinEdge_t
 {
 	EDGE_NOT	= -1,		// No edge
 	EDGE_NONE,				/* No edge on both sides	/##\  */
-	EDGE_FULL,				// Edge on both sides		|##| 
+	EDGE_FULL,				// Edge on both sides		|##|
 	EDGE_LEFT,				/* Edge is on left only		|##\  */
 	EDGE_RIGHT,				// Edge is on right only	/##|
 };
@@ -90,7 +90,7 @@ public:
 	bool			m_bIsBroken;
 	int				m_nSurfaceType;
 
-						
+
 	// This is the texture we're going to use to multiply by the cracked base texture
 	ITexture*	m_pCurrentDetailTexture;
 
@@ -108,7 +108,7 @@ public:
 
 	bool		IsTransparent( void );
 	bool		HavePanel(int nWidth, int nHeight);
-	bool		RenderBrushModelSurface( IClientEntity* pBaseEntity, IBrushSurface* pBrushSurface ); 
+	bool		RenderBrushModelSurface( IClientEntity* pBaseEntity, IBrushSurface* pBrushSurface );
 	int			DrawModel( int flags );
 	void		DrawSolidBlocks( IBrushSurface* pBrushSurface );
 
@@ -120,10 +120,10 @@ private:
 	// One bit per pane
 	CNetworkArray( bool, m_RawPanelBitVec, MAX_NUM_PANELS * MAX_NUM_PANELS );
 	bool m_PrevRawPanelBitVec[ MAX_NUM_PANELS * MAX_NUM_PANELS ];
-	
+
 	// 2 bits of flags and 2 bits of edge type
 	byte		m_nPanelBits[MAX_NUM_PANELS][MAX_NUM_PANELS];	//UNDONE: allocate this dynamically?
-	CMaterialReference	m_pMaterialBox;	
+	CMaterialReference	m_pMaterialBox;
 	EdgeTexture_t	m_pSolid;
 	EdgeTexture_t	m_pEdge[NUM_EDGE_TYPES][NUM_EDGE_STYLES];
 
@@ -133,14 +133,14 @@ private:
 	inline void	SetPanelSolid(int nWidth, int nHeight, bool value);
 	inline void	SetPanelStale(int nWidth, int nHeight, bool value);
 
-	void		DrawOneEdge( IBrushSurface* pBrushSurface, IMesh* pMesh, 
-					CMeshBuilder *pMeshBuilder, const Vector &vStartPos,  
+	void		DrawOneEdge( IBrushSurface* pBrushSurface, IMesh* pMesh,
+					CMeshBuilder *pMeshBuilder, const Vector &vStartPos,
 					const Vector &vWStep, const Vector &vHstep, WinSide_t nEdge);
-	void		DrawOneHighlight( IBrushSurface* pBrushSurface, IMesh* pMesh, 
-					CMeshBuilder *pMeshBuilder, const Vector &vStartPos,  
+	void		DrawOneHighlight( IBrushSurface* pBrushSurface, IMesh* pMesh,
+					CMeshBuilder *pMeshBuilder, const Vector &vStartPos,
 					const Vector &vWStep, const Vector &vHstep, WinSide_t nEdge);
-	void		DrawOneBlock(IBrushSurface* pBrushSurface, IMesh* pMesh, 
-					CMeshBuilder *pMeshBuilder, const Vector &vPosition, 
+	void		DrawOneBlock(IBrushSurface* pBrushSurface, IMesh* pMesh,
+					CMeshBuilder *pMeshBuilder, const Vector &vPosition,
 					const Vector &vWidth, const Vector &vHeight);
 
 	void		DrawRenderList( IBrushSurface* pBrushSurface);
@@ -200,23 +200,23 @@ BEGIN_DATADESC( C_BreakableSurface )
 END_DATADESC()
 
 bool C_BreakableSurface::InLegalRange(int nWidth, int nHeight)
-{ 
-	return (nWidth < m_nNumWide && nHeight < m_nNumHigh && 
+{
+	return (nWidth < m_nNumWide && nHeight < m_nNumHigh &&
 		nWidth >=0 && nHeight >= 0 );
 }
 
 bool C_BreakableSurface::IsPanelSolid(int nWidth, int nHeight)
-{ 
+{
 	return ( BITS_PANEL_IS_SOLID & m_nPanelBits[nWidth][nHeight] )!=0 ;
 }
 
 bool C_BreakableSurface::IsPanelStale(int nWidth, int nHeight)
-{ 
-	return ( BITS_PANEL_IS_STALE & m_nPanelBits[nWidth][nHeight] )!=0 ; 
+{
+	return ( BITS_PANEL_IS_STALE & m_nPanelBits[nWidth][nHeight] )!=0 ;
 }
 
 void C_BreakableSurface::SetPanelSolid(int nWidth, int nHeight, bool value)
-{ 
+{
 	if ( !InLegalRange( nWidth, nHeight ) )
 		return;
 
@@ -231,7 +231,7 @@ void C_BreakableSurface::SetPanelSolid(int nWidth, int nHeight, bool value)
 }
 
 void C_BreakableSurface::SetPanelStale(int nWidth, int nHeight, bool value)
-{ 
+{
 	if ( !InLegalRange( nWidth, nHeight) )
 		return;
 
@@ -254,7 +254,7 @@ void C_BreakableSurface::OnRestore()
 	// traverse everthing and restore bits
 	// Initialize panels
 	for (int w=0;w<m_nNumWide;w++)
-	{ 
+	{
 		for (int h=0;h<m_nNumHigh;h++)
 		{
 			// Force recomputation
@@ -315,7 +315,7 @@ void C_BreakableSurface::FindCrackedMaterial()
 
 
 //-----------------------------------------------------------------------------
-// Gets at the base texture 
+// Gets at the base texture
 //-----------------------------------------------------------------------------
 
 static ITexture* GetBaseTexture( IMaterial* pMaterial )
@@ -370,7 +370,7 @@ void C_BreakableSurface::OnPreDataChanged( DataUpdateType_t updateType )
 		m_nNumWide = MAX_NUM_PANELS;
 		m_nNumHigh = MAX_NUM_PANELS;
 		for (int w=0;w<MAX_NUM_PANELS;w++)
-		{ 
+		{
 			for (int h=0;h<MAX_NUM_PANELS;h++)
 			{
 				SetPanelSolid(w,h,true);
@@ -384,8 +384,8 @@ void C_BreakableSurface::OnPreDataChanged( DataUpdateType_t updateType )
 
 
 //-----------------------------------------------------------------------------
-// Purpose: 
-// Input  : bnewentity - 
+// Purpose:
+// Input  : bnewentity -
 //-----------------------------------------------------------------------------
 void C_BreakableSurface::OnDataChanged( DataUpdateType_t updateType )
 {
@@ -421,7 +421,7 @@ void C_BreakableSurface::OnDataChanged( DataUpdateType_t updateType )
 			InitMaterial(EDGE_LEFT,	2,"models/brokentile/tilebroken_01c");
 			InitMaterial(EDGE_RIGHT,2,"models/brokentile/tilebroken_01d");
 		}
-		else 
+		else
 		{
 			InitMaterial(EDGE_NONE,	0,"models/brokenglass/glassbroken_03a");
 			InitMaterial(EDGE_FULL,	0,"models/brokenglass/glassbroken_03b");
@@ -439,7 +439,7 @@ void C_BreakableSurface::OnDataChanged( DataUpdateType_t updateType )
 			InitMaterial(EDGE_RIGHT,2,"models/brokenglass/glassbroken_01d");
 		}
 	}
-	
+
 	bool changed = false;
 
 	for ( int j = 0; j < m_nNumHigh; j++ )
@@ -460,7 +460,7 @@ void C_BreakableSurface::OnDataChanged( DataUpdateType_t updateType )
 
 			if ( !newVal && changed )
 			{
-					
+
 				// Mark these panels and being stale (need edge type updated)
 				// We update them in one fell swoop rather than as each panel
 				// is updated, so we don't have to do duplicate operations
@@ -502,7 +502,7 @@ bool C_BreakableSurface::IsTransparent( void )
 
 	return C_BaseEntity::IsTransparent();
 }
-  
+
 
 //------------------------------------------------------------------------------
 // Purpose :
@@ -516,13 +516,13 @@ int C_BreakableSurface::DrawModel( int flags )
 
 	// If I'm not broken draw normally
 	if (m_bIsBroken)
-		render->InstallBrushSurfaceRenderer( this );
+		InstallBrushSurfaceRenderer( this );
 
 	// If it's broken, always draw it translucent
 	BaseClass::DrawModel( m_bIsBroken ? flags | STUDIO_TRANSPARENCY : flags );
 
 	// Remove our nonstandard brush surface renderer...
-	render->InstallBrushSurfaceRenderer( 0 );
+	InstallBrushSurfaceRenderer( NULL );
 
 	return 0;
 }
@@ -563,7 +563,7 @@ void C_BreakableSurface::DrawRenderList(IBrushSurface* pBrushSurface)
 	CMatRenderContextPtr pRenderContext( materials );
 	for( unsigned short i = m_RenderList.Head(); i != m_RenderList.InvalidIndex(); i = m_RenderList.Next(i) )
 	{
-	
+
 		if (nCurStyle		!= m_RenderList[i].m_nStyle		||
 			nCurEdgeType	!= m_RenderList[i].m_nEdgeType	)
 		{
@@ -576,8 +576,8 @@ void C_BreakableSurface::DrawRenderList(IBrushSurface* pBrushSurface)
 			pMesh = pRenderContext->GetDynamicMesh( );
 		}
 
-		Vector vRenderPos = m_vCorner + 
-							(m_RenderList[i].m_nWidth*vWidthStep)	+ 
+		Vector vRenderPos = m_vCorner +
+							(m_RenderList[i].m_nWidth*vWidthStep)	+
 							(m_RenderList[i].m_nHeight*vHeightStep);
 
 		DrawOneEdge(pBrushSurface, pMesh,&pMeshBuilder,vRenderPos,vWidthStep,vHeightStep,(WinSide_t)m_RenderList[i].m_nSide);
@@ -608,19 +608,19 @@ void C_BreakableSurface::DrawRenderListHighlights(IBrushSurface* pBrushSurface)
 	CMatRenderContextPtr pRenderContext( materials );
 	for( unsigned short i = m_RenderList.Head(); i != m_RenderList.InvalidIndex(); i = m_RenderList.Next(i) )
 	{
-	
+
 		if (nCurStyle		!= m_RenderList[i].m_nStyle		||
 			nCurEdgeType	!= m_RenderList[i].m_nEdgeType	)
 		{
 			nCurStyle	 = m_RenderList[i].m_nStyle;
 			nCurEdgeType = m_RenderList[i].m_nEdgeType;
-			
+
 			IMaterial *pMat = m_pEdge[nCurEdgeType][nCurStyle].m_pMaterialEdge;
 			pMesh = pRenderContext->GetDynamicMesh( true, NULL, NULL, pMat );
 		}
 
-		Vector vRenderPos = m_vCorner + 
-							(m_RenderList[i].m_nWidth*vWidthStep)	+ 
+		Vector vRenderPos = m_vCorner +
+							(m_RenderList[i].m_nWidth*vWidthStep)	+
 							(m_RenderList[i].m_nHeight*vHeightStep) +
 							(0.30*m_vNormal);
 
@@ -669,7 +669,7 @@ void C_BreakableSurface::UpdateEdgeType(int nWidth, int nHeight, int forceStyle 
 	{
 		return;
 	}
-	
+
 	// Panel is no longer stale
 	SetPanelStale(nWidth, nHeight,false);
 
@@ -865,7 +865,7 @@ void C_BreakableSurface::AddToRenderList(int nWidth, int nHeight, WinSide_t nSid
 	{
 		nStyle = random->RandomInt(0,NUM_EDGE_STYLES-1);
 	}
-		
+
 	if ( forceStyle != -1 )
 	{
 		nStyle = forceStyle;
@@ -914,7 +914,7 @@ void C_BreakableSurface::DrawSolidBlocks(IBrushSurface* pBrushSurface)
 
 	m_pCurrentDetailTexture = m_pMaterialBoxTexture;
 
-	// Gotta flush (in a non-stalling way) because we effectively 
+	// Gotta flush (in a non-stalling way) because we effectively
 	// have a new material due to the new base texture
 	pRenderContext->Flush(false);
 	pRenderContext->Bind(m_pCrackedMaterial, (IClientRenderable*)this);
@@ -965,8 +965,8 @@ void C_BreakableSurface::DrawSolidBlocks(IBrushSurface* pBrushSurface)
 // Input   :
 // Output  :
 //------------------------------------------------------------------------------
-void C_BreakableSurface::DrawOneBlock(IBrushSurface* pBrushSurface, IMesh* pMesh, 
-	CMeshBuilder *pMeshBuilder,  const Vector &vCurPos, const Vector &vWidthStep, 
+void C_BreakableSurface::DrawOneBlock(IBrushSurface* pBrushSurface, IMesh* pMesh,
+	CMeshBuilder *pMeshBuilder,  const Vector &vCurPos, const Vector &vWidthStep,
 	const Vector &vHeightStep)
 {
 	pMeshBuilder->Begin( pMesh, MATERIAL_QUADS, 1 );
@@ -1031,8 +1031,8 @@ void C_BreakableSurface::DrawOneBlock(IBrushSurface* pBrushSurface, IMesh* pMesh
 // Input   :
 // Output  :
 //------------------------------------------------------------------------------
-void C_BreakableSurface::DrawOneEdge( IBrushSurface* pBrushSurface, IMesh* pMesh, 
-	CMeshBuilder *pMeshBuilder,  const Vector &vStartPos,  const Vector &vWStep, 
+void C_BreakableSurface::DrawOneEdge( IBrushSurface* pBrushSurface, IMesh* pMesh,
+	CMeshBuilder *pMeshBuilder,  const Vector &vStartPos,  const Vector &vWStep,
 	const Vector &vHStep, WinSide_t nEdge )
 {
 	pMeshBuilder->Begin( pMesh, MATERIAL_QUADS, 1 );
@@ -1062,7 +1062,7 @@ void C_BreakableSurface::DrawOneEdge( IBrushSurface* pBrushSurface, IMesh* pMesh
 			break;
 	}
  	pMeshBuilder->AdvanceVertex();
-	
+
 	Vector vNextPos = vStartPos + vWStep;
 
 	pBrushSurface->ComputeTextureCoordinate( vNextPos, texCoord );
@@ -1156,8 +1156,8 @@ void C_BreakableSurface::DrawOneEdge( IBrushSurface* pBrushSurface, IMesh* pMesh
 // Input   :
 // Output  :
 //------------------------------------------------------------------------------
-void C_BreakableSurface::DrawOneHighlight( IBrushSurface* pBrushSurface, IMesh* pMesh, 
-	CMeshBuilder *pMeshBuilder,  const Vector &vStartPos,  const Vector &vWStep, 
+void C_BreakableSurface::DrawOneHighlight( IBrushSurface* pBrushSurface, IMesh* pMesh,
+	CMeshBuilder *pMeshBuilder,  const Vector &vStartPos,  const Vector &vWStep,
 	const Vector &vHStep, WinSide_t nEdge )
 {
 	Vector vColor = Vector(0.41,0.35,0.24);
@@ -1188,7 +1188,7 @@ void C_BreakableSurface::DrawOneHighlight( IBrushSurface* pBrushSurface, IMesh* 
 			break;
 	}
  	pMeshBuilder->AdvanceVertex();
-	
+
 	Vector vNextPos = vStartPos + vWStep;
 
 	pBrushSurface->ComputeTextureCoordinate( vNextPos, texCoord );

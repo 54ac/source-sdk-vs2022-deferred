@@ -20,7 +20,7 @@
 #pragma once
 #endif
 
-extern ConVar	my_mat_fullbright;
+extern ConVar	mat_fullbright;
 
 template<int N> class CFixedCommandStorageBuffer
 {
@@ -96,6 +96,13 @@ public:
 		return m_pDataOut - m_Data;
 	}
 
+	FORCEINLINE uint8 *Copy()
+	{
+		int size = Size();
+		uint8 *tmp = new uint8[ size ];
+		Q_memcpy( tmp, m_Data, size );
+		return  tmp;
+	}
 };
 
 template<class S> class CCommandBufferBuilder
@@ -163,6 +170,21 @@ public:
 	{
 		SetPixelShaderConstants( nFirstConstant, 1 );
 		OutputConstantData( pSrcData );
+	}
+
+	FORCEINLINE void SetPixelShaderConstant1( int nFirstConstant, float flVal0 )
+	{
+		SetPixelShaderConstant4( nFirstConstant, flVal0, 0, 0, 0 );
+	}
+
+	FORCEINLINE void SetPixelShaderConstant2( int nFirstConstant, float flVal0, float flVal1 )
+	{
+		SetPixelShaderConstant4( nFirstConstant, flVal0, flVal1, 0, 0 );
+	}
+
+	FORCEINLINE void SetPixelShaderConstant3( int nFirstConstant, float flVal0, float flVal1, float flVal2 )
+	{
+		SetPixelShaderConstant4( nFirstConstant, flVal0, flVal1, flVal2, 0 );
 	}
 
 	FORCEINLINE void SetPixelShaderConstant4( int nFirstConstant, float flVal0, float flVal1, float flVal2, float flVal3 )
@@ -266,7 +288,7 @@ public:
 
 	FORCEINLINE void SetEnvMapTintPixelShaderDynamicState( int pixelReg, int tintVar )
 	{
-		if( g_pConfig->bShowSpecular && my_mat_fullbright.GetInt() != 2 )
+		if( g_pConfig->bShowSpecular && mat_fullbright.GetInt() != 2 )
 		{
 			SetPixelShaderConstant( pixelReg, Param( tintVar)->GetVecValue() );
 		}
@@ -278,7 +300,7 @@ public:
 
 	FORCEINLINE void SetEnvMapTintPixelShaderDynamicStateGammaToLinear( int pixelReg, int tintVar, float flAlphaValue = 1.0 )
 	{
-		if( ( tintVar != -1 ) && g_pConfig->bShowSpecular && my_mat_fullbright.GetInt() != 2 )
+		if( ( tintVar != -1 ) && g_pConfig->bShowSpecular && mat_fullbright.GetInt() != 2 )
 		{
 			float color[4];
 			color[3] = flAlphaValue;
@@ -339,7 +361,7 @@ public:
 		}
 	}
 
-	FORCEINLINE void BindTexture( CBaseVSShader *pShader, Sampler_t nSampler, int nTextureVar, int nFrameVar )
+	FORCEINLINE void BindTexture( CBaseVSShader *pShader, Sampler_t nSampler, int nTextureVar, int nFrameVar = -1 )
 	{
 		ShaderAPITextureHandle_t hTexture = pShader->GetShaderAPITextureBindHandle( nTextureVar, nFrameVar );
 		BindTexture( nSampler, hTexture );
@@ -399,8 +421,10 @@ public:
 		return m_Storage.Base();
 	}
 
-
-
+	FORCEINLINE uint8 *Copy( void )
+	{
+		return m_Storage.Copy();
+	}
 };
 
 

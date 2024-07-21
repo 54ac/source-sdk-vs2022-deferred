@@ -58,6 +58,7 @@ class C_BaseCombatCharacter;
 class CEntityMapData;
 class ConVar;
 class CDmgAccumulator;
+class IBrushRenderer;
 
 struct CSoundParameters;
 
@@ -1673,6 +1674,10 @@ protected:
 
 	CThreadFastMutex m_CalcAbsolutePositionMutex;
 	CThreadFastMutex m_CalcAbsoluteVelocityMutex;
+
+	void InstallBrushSurfaceRenderer( IBrushRenderer* );
+private:
+	bool m_bHasSpecialRenderer;
 
 #ifdef TF_CLIENT_DLL
 	// TF prevents drawing of any entity attached to players that aren't items in the inventory of the player.

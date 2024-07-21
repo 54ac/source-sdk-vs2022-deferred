@@ -1,6 +1,6 @@
 //========= Copyright Valve Corporation, All rights reserved. ============//
 //
-// Purpose: 
+// Purpose:
 //
 //=============================================================================//
 
@@ -10,7 +10,7 @@
 #pragma once
 #endif
 
-struct dlight_t;
+//struct dlight_t;
 
 
 class CFlashlightEffect
@@ -27,10 +27,12 @@ public:
 
 	ClientShadowHandle_t GetFlashlightHandle( void ) { return m_FlashlightHandle; }
 	void SetFlashlightHandle( ClientShadowHandle_t Handle ) { m_FlashlightHandle = Handle;	}
-	
+
 protected:
 
-	void LightOff();
+	virtual void UpdateLightProjection( FlashlightState_t &state );
+
+	virtual void LightOff();
 	void LightOffOld();
 	void LightOffNew();
 
@@ -49,10 +51,13 @@ protected:
 	CTextureReference m_FlashlightTexture;
 };
 
-class CHeadlightEffect : public CFlashlightEffect
+#include "deferred/flashlighteffect_deferred.h"
+
+//class CHeadlightEffect : public CFlashlightEffect
+class CHeadlightEffect : public CFlashlightEffectDeferred
 {
 public:
-	
+
 	CHeadlightEffect();
 	~CHeadlightEffect();
 
