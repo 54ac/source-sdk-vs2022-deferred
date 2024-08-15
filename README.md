@@ -17,4 +17,4 @@ It should work out of the box with VS2022. I would recommend migrating the shade
 - Use the `-nodeferred` command line argument to disable deferred lighting. This causes some decals to flicker, although they also flicker with deferred lighting on, but in a different way.
 - Console commands related to deferred lighting start with r_deferred. I added notes to some of the commands to better explain what they do (as far as I know).
 - The repo includes diff patches (in unified format) to possibly help implement the changes to the files from the original repository.
-- See the SDKREADME and LICENSE files for more information regarding Valve Software's original Source SDK.
+- See the LICENSE file for more information regarding Valve Software's original Source SDK.
