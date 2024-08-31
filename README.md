@@ -4,6 +4,8 @@
 
 This is a fork of the [source-sdk-vs2022](https://github.com/Source-SDK-Resources/source-sdk-vs2022) repository merged with [SCell555's port](https://github.com/SCell555/sdk-2013-deferred) of [Biohazard90's deferred lighting implementation](https://github.com/jonathonracz/swarm-deferred-src) based on [Alien Swarm's](https://github.com/NicolasDe/AlienSwarm) deferred shading, via [Lambda Wars](https://github.com/Sandern/lambdawars). I tried to minimize the amount of changes made to the original repository to make it as painless as possible to implement, with some of my own minor tweaks/fixes/workarounds. Still very much a proof of concept rather than a full implementation.
 
+![dm_lockdown0000](https://github.com/user-attachments/assets/cbec4453-7350-465e-8f53-1a5f806a1a72)
+
 ### How do I compile this?
 
 It should work out of the box with VS2022. I would recommend migrating the shader pipeline to [SCell555's Shader Compile](https://github.com/SCell555/ShaderCompile) tool, but that's up to you.
