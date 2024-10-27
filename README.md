@@ -8,7 +8,7 @@ This is a fork of the [source-sdk-vs2022](https://github.com/Source-SDK-Resource
 
 ### How do I compile this?
 
-It should work out of the box with VS2022. I would recommend migrating the shader pipeline to [SCell555's Shader Compile](https://github.com/SCell555/ShaderCompile) tool, but that's up to you.
+It should work out of the box with VS2022. [This tutorial](https://developer.valvesoftware.com/wiki/Implementing_Deferred_lighting_into_Source_2013) uses this repo as its base. I would recommend migrating the shader pipeline to [SCell555's Shader Compile](https://github.com/SCell555/ShaderCompile) tool, but that's up to you.
 
 ### Notes
 
